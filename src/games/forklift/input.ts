@@ -6,6 +6,7 @@ export interface ControlState {
   turbo: boolean;
   horn: boolean;
   camPressed: boolean; // edge-triggered, consumed by game
+  tiltPressed: boolean; // edge-triggered: toggle mast tilt
 }
 
 export interface ControlSource {
@@ -14,27 +15,27 @@ export interface ControlSource {
 }
 
 const empty = (): ControlState => ({
-  throttle: 0, steer: 0, lift: 0, handbrake: false, turbo: false, horn: false, camPressed: false,
+  throttle: 0, steer: 0, lift: 0, handbrake: false, turbo: false, horn: false, camPressed: false, tiltPressed: false,
 });
 
 interface KeyMap {
   up: string[]; down: string[]; left: string[]; right: string[];
-  liftUp: string[]; liftDown: string[]; brake: string[]; turbo: string[]; horn: string[]; cam: string[];
+  liftUp: string[]; liftDown: string[]; brake: string[]; turbo: string[]; horn: string[]; cam: string[]; tilt: string[];
 }
 
 export const KEYMAP_P1: KeyMap = {
   up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
-  liftUp: ['KeyR'], liftDown: ['KeyF'], brake: ['Space'], turbo: ['ShiftLeft'], horn: ['KeyH'], cam: ['KeyC'],
+  liftUp: ['KeyR'], liftDown: ['KeyF'], brake: ['Space'], turbo: ['ShiftLeft'], horn: ['KeyH'], cam: ['KeyC'], tilt: ['KeyT'],
 };
 export const KEYMAP_SOLO: KeyMap = {
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   liftUp: ['KeyR', 'KeyE', 'PageUp'], liftDown: ['KeyF', 'KeyQ', 'PageDown'], brake: ['Space'],
-  turbo: ['ShiftLeft', 'ShiftRight'], horn: ['KeyH'], cam: ['KeyC', 'KeyV'],
+  turbo: ['ShiftLeft', 'ShiftRight'], horn: ['KeyH'], cam: ['KeyC', 'KeyV'], tilt: ['KeyT', 'KeyG'],
 };
 export const KEYMAP_P2: KeyMap = {
   up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
   liftUp: ['Period', 'Numpad8'], liftDown: ['Comma', 'Numpad2'], brake: ['Slash', 'Numpad0'],
-  turbo: ['ShiftRight', 'Numpad5'], horn: ['KeyL', 'NumpadEnter'], cam: ['KeyM', 'Numpad1'],
+  turbo: ['ShiftRight', 'Numpad5'], horn: ['KeyL', 'NumpadEnter'], cam: ['KeyM', 'Numpad1'], tilt: ['KeyK', 'Numpad3'],
 };
 
 const pressed = new Set<string>();
@@ -53,6 +54,7 @@ function ensureListeners() {
 
 export class KeyboardControls implements ControlSource {
   private camWas = false;
+  private tiltWas = false;
   constructor(private map: KeyMap, private gamepadIndex: number | null = null) {
     ensureListeners();
   }
@@ -66,6 +68,7 @@ export class KeyboardControls implements ControlSource {
     s.turbo = k(this.map.turbo);
     s.horn = k(this.map.horn);
     let cam = k(this.map.cam);
+    let tilt = k(this.map.tilt);
 
     if (this.gamepadIndex !== null) {
       const gp = navigator.getGamepads?.()[this.gamepadIndex];
@@ -83,9 +86,12 @@ export class KeyboardControls implements ControlSource {
         s.turbo ||= !!gp.buttons[1]?.pressed || !!gp.buttons[5]?.pressed;
         s.horn ||= !!gp.buttons[2]?.pressed;
         cam ||= !!gp.buttons[3]?.pressed;
+        tilt ||= !!gp.buttons[4]?.pressed;
       }
     }
     s.camPressed = cam && !this.camWas;
+    s.tiltPressed = tilt && !this.tiltWas;
+    this.tiltWas = tilt;
     this.camWas = cam;
     return s;
   }
@@ -98,6 +104,7 @@ export class TouchControls implements ControlSource {
   private stick = { id: -1, ox: 0, oy: 0, x: 0, y: 0 };
   private held = new Set<string>();
   private camQueued = false;
+  private tiltQueued = false;
   private kb: KeyboardControls;
   private knob: HTMLDivElement;
   private base: HTMLDivElement;
@@ -113,6 +120,7 @@ export class TouchControls implements ControlSource {
         <button data-b="turbo" class="tb turbo">🔥<small>터보</small></button>
         <button data-b="liftDown" class="tb lift">▼<small>포크</small></button>
         <button data-b="brake" class="tb brake">🌀<small>드리프트</small></button>
+        <button data-b="tilt" class="tb small">📐<small>틸트</small></button>
         <button data-b="cam" class="tb small">🎥<small>시점</small></button>
         <button data-b="horn" class="tb small">📯<small>빵!</small></button>
       </div>`;
@@ -167,6 +175,7 @@ export class TouchControls implements ControlSource {
       const down = (e: Event) => {
         e.preventDefault();
         if (name === 'cam') this.camQueued = true;
+        if (name === 'tilt') this.tiltQueued = true;
         this.held.add(name);
         b.classList.add('on');
       };
@@ -197,6 +206,10 @@ export class TouchControls implements ControlSource {
     s.turbo ||= this.held.has('turbo');
     s.handbrake ||= this.held.has('brake');
     s.horn ||= this.held.has('horn');
+    if (this.tiltQueued) {
+      s.tiltPressed = true;
+      this.tiltQueued = false;
+    }
     if (this.camQueued) {
       s.camPressed = true;
       this.camQueued = false;

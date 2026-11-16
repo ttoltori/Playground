@@ -81,12 +81,18 @@ interface Player {
   lastHit: number;
   lift: number;
   ctl: ControlState;
+  slideT: number;
+  lastStab: number;
+  pushSync: number;
+  inserted: number; // pallet whose pockets currently hold our tines
+  align: string;
+  alignOk: boolean;
   net?: { x: number; z: number; y: number; yaw: number; vx: number; vz: number; forkH: number; steer: number; carry: number; carryYaw: number; recv: number };
 }
 
 const STEP = 1 / 60;
 const CAM_LABELS = ['3인칭', '1인칭', '탑뷰'];
-const zeroCtl = (): ControlState => ({ throttle: 0, steer: 0, lift: 0, handbrake: false, turbo: false, horn: false, camPressed: false });
+const zeroCtl = (): ControlState => ({ throttle: 0, steer: 0, lift: 0, handbrake: false, turbo: false, horn: false, camPressed: false, tiltPressed: false });
 const newStats = (): PlayerStats => ({ delivered: 0, penalty: 0, style: 0, cones: 0, crashes: 0, drops: 0, breaks: 0, airtime: 0, nearMiss: 0, perfect: 0, rams: 0, maxSpeed: 0 });
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const cssColor = (c: number) => '#' + c.toString(16).padStart(6, '0');
@@ -211,7 +217,7 @@ export class Game {
       }
       this.players.push({
         idx, spec, colorCss: cssColor(spec.color), f, ctrl, remote, cam, camMode: 0, hud, stats: newStats(),
-        engaged: -1, pickT: 0, tipTimer: 0, climbVy: 0, shake: 0, driftT: 0, lastRadio: -10, lastCone: -10, lastHit: -10, lift: 0, ctl: zeroCtl(),
+        engaged: -1, pickT: 0, tipTimer: 0, climbVy: 0, shake: 0, driftT: 0, lastRadio: -10, lastCone: -10, lastHit: -10, lift: 0, ctl: zeroCtl(), slideT: 0, lastStab: -10, pushSync: 0, inserted: -1, align: '', alignOk: false,
       });
     });
   }
@@ -327,6 +333,12 @@ export class Game {
     p.ctl = ctl;
     const w = this.world;
 
+    // ---- mast tilt (toggle): tilt back to cradle the load, level to enter / leave pockets
+    if (raw.tiltPressed) f.tiltTarget = f.tiltTarget > 0 ? 0 : 0.11;
+    const tr = 0.3 * dt;
+    f.tilt += clamp(f.tiltTarget - f.tilt, -tr, tr);
+    const tilted = f.tilt > 0.06;
+
     // ---- steering (rear-wheel steer: the tail swings around the front axle)
     const spd = f.speed;
     const maxSteer = THREE.MathUtils.lerp(0.62, 0.3, clamp(Math.abs(spd) / 12, 0, 1));
@@ -338,6 +350,7 @@ export class Game {
     const [rx, rz] = f.right;
     let vf = f.vx * fx + f.vz * fz;
     let vl = f.vx * rx + f.vz * rz;
+    const vf0 = vf;
     const onOil = w.gripAt(f.x, f.z) < 1;
 
     if (!f.airborne) {
@@ -360,6 +373,17 @@ export class Game {
       }
       if (vf > maxF) vf = Math.max(maxF, vf - 6 * dt);
       if (ctl.handbrake) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 3.5 * dt);
+      // ---- hard braking with an un-tilted load: the pallet slides off the forks
+      if (f.carrying >= 0) {
+        const decel = (vf0 - vf) / dt;
+        const slideLimit = (tilted ? 30 : 9) - f.forkH * 1.2;
+        if (vf0 > 2 && decel > slideLimit) p.slideT += dt;
+        else p.slideT = Math.max(0, p.slideT - dt);
+        if (p.slideT > 0.12) {
+          p.slideT = 0;
+          this.dropCargo(p, 'slide');
+        }
+      }
       const grip = onOil ? 0.7 : ctl.handbrake ? 1.6 : 11;
       vl *= Math.exp(-grip * dt);
       let yr = (vf * Math.tan(f.steer)) / FK.wheelbase;
@@ -379,7 +403,7 @@ export class Game {
       // ---- tipping
       const aLat = vf * yr;
       const loadH = f.carrying >= 0 ? f.forkH + 0.6 : f.forkH * 0.3;
-      const limit = f.carrying >= 0 ? 11 - loadH * 2.3 : 18 - loadH * 3;
+      const limit = f.carrying >= 0 ? 11 - loadH * 2.3 + (tilted ? 1.5 : 0) : 18 - loadH * 3;
       f.tipRisk = Math.abs(aLat) / limit;
       f.roll = clamp(-aLat * 0.012, -0.14, 0.14) * (1 + Math.max(0, f.tipRisk - 0.7) * 2);
       if (f.tipRisk > 1) p.tipTimer += dt;
@@ -462,7 +486,10 @@ export class Game {
     }
 
     // ---- forks
-    const liftRate = 1.15;
+    const wasCarrying = f.carrying >= 0;
+    if (!wasCarrying) this.tryPickup(p); // before the forks move, while they still sit in the pockets
+    // a loaded mast lifts slower and sinks faster
+    const liftRate = f.carrying >= 0 ? (ctl.lift > 0 ? 0.85 : 1.3) : 1.15;
     p.lift = ctl.lift;
     let fork = clamp(f.forkH + ctl.lift * liftRate * dt, 0, FK.maxFork);
     let restTop = 0;
@@ -486,11 +513,11 @@ export class Game {
     f.forkH = fork;
 
     // ---- collisions
+    this.forkContacts(p, dt);
     this.resolveCollisions(p, dyn);
 
     // ---- pallets: pick / place
-    if (f.carrying < 0) this.tryPickup(p);
-    else if (resting && ctl.lift <= 0 && this.state === 'run') this.placePallet(p, restTop);
+    if (wasCarrying && f.carrying >= 0 && resting && ctl.lift <= 0 && this.state === 'run') this.placePallet(p, restTop);
 
     // ---- cones
     const body = f.bodyObb();
@@ -598,41 +625,189 @@ export class Game {
     }
     if (f.carrying >= 0) {
       const pal = this.world.pallets[f.carrying];
-      const thr = (pal.fragile ? 3.2 : 6) * (1 - Math.min(0.5, f.forkH * 0.15));
+      const thr = (pal.fragile ? 3.2 : 6) * (1 - Math.min(0.5, f.forkH * 0.15)) * (f.tilt > 0.06 ? 1.35 : 1);
       if (impact > thr) this.dropCargo(p, 'crash');
     }
+  }
+
+  /** Do the two tines line up with the pallet's fork pockets? */
+  private forkFit(f: Forklift, pal: Pallet): { ok: boolean; why: string } {
+    const rel = f.y + f.forkH - pal.y;
+    if (rel > 0.07) return { ok: false, why: '포크가 높다 ▼' };
+    if (rel < -0.02) return { ok: false, why: '포크가 낮다 ▲' };
+    if (f.tilt > 0.03) return { ok: false, why: '틸트를 수평으로 📐' };
+    const th = quarterDiff(f.yaw - pal.yaw);
+    const [rx, rz] = f.right;
+    const lx = (pal.x - f.x) * rx + (pal.z - f.z) * rz;
+    if (th > 0.2) return { ok: false, why: '각도가 틀어졌다 ↻' };
+    // pocket spans 0.05..0.50 from the pallet center, tine spans 0.24..0.36 -> ~0.14 of play, less when skewed
+    if (Math.abs(lx) + 0.6 * Math.tan(th) > 0.15) {
+      if (Math.abs(lx) < 0.1) return { ok: false, why: '각도가 틀어졌다 ↻' };
+      return { ok: false, why: lx > 0 ? '← 왼쪽으로 더' : '오른쪽으로 더 →' };
+    }
+    return { ok: true, why: '' };
+  }
+
+  private palletCanMove(pal: Pallet, dx: number, dz: number): boolean {
+    const o = { x: pal.x + dx, z: pal.z + dz, hw: 0.6, hd: 0.6, yaw: pal.yaw };
+    for (const c of this.world.statics) {
+      if (c.yMax <= pal.y + 0.02 || c.yMin >= pal.y + PALLET_H) continue;
+      if (collide(o, c)) return false;
+    }
+    for (const q of this.world.pallets) {
+      if (q === pal || q.carriedBy !== -1) continue;
+      if (q.y >= pal.y + PALLET_H || q.y + PALLET_H <= pal.y) continue;
+      if (obbVsObb(o, { x: q.x, z: q.z, hw: 0.6, hd: 0.6, yaw: q.yaw })) return false;
+    }
+    return true;
+  }
+
+  /** Tines vs pallets: they only slide in when aligned with the pockets. Otherwise they shove or stab the load. */
+  private forkContacts(p: Player, dt: number) {
+    const f = p.f;
+    p.align = '';
+    if (f.carrying >= 0) return;
+    const forks = f.forkObbs();
+    const fy = f.y + f.forkH;
+    const [tx, tz] = f.forkTip();
+    const [fx, fz] = f.fwd;
+    let moved: Pallet | null = null;
+    let guide: Pallet | null = null;
+    let gd = 3.4;
+    // tines already inside a pallet: the pallet is dragged along (or, if it can't move, it holds the truck)
+    if (p.inserted >= 0) {
+      const pal = this.world.pallets[p.inserted];
+      const po = { x: pal.x, z: pal.z, hw: 0.6, hd: 0.6, yaw: pal.yaw };
+      if (pal.carriedBy !== -1 || !forks.some((fk) => obbVsObb(fk, po))) p.inserted = -1;
+      else {
+        const q = Math.PI / 2;
+        let d = (f.yaw - pal.yaw) % q;
+        if (d > q / 2) d -= q;
+        if (d <= -q / 2) d += q;
+        const [rx, rz] = f.right;
+        const lx = (pal.x - f.x) * rx + (pal.z - f.z) * rz;
+        const slack = Math.abs(lx) + 0.6 * Math.tan(Math.abs(d));
+        if (slack > 0.15) {
+          const k = 0.15 / slack;
+          const dYaw = d * (1 - k);
+          const dLat = lx * (1 - k);
+          if (!pal.delivered && this.palletCanMove(pal, -rx * dLat, -rz * dLat)) {
+            pal.yaw += dYaw;
+            pal.x -= rx * dLat;
+            pal.z -= rz * dLat;
+            moved = pal;
+          } else {
+            f.yaw -= dYaw;
+            f.x += rx * dLat;
+            f.z += rz * dLat;
+            const vl = f.vx * rx + f.vz * rz;
+            f.vx -= rx * vl;
+            f.vz -= rz * vl;
+          }
+        }
+        const rel = f.y + f.forkH - pal.y;
+        if (rel > 0.07) f.forkH = pal.y + 0.07 - f.y;
+        if (rel < -0.02) f.forkH = Math.max(0, pal.y - 0.02 - f.y);
+      }
+    }
+    for (const pal of this.world.pallets) {
+      if (pal.carriedBy !== -1) continue;
+      const d = Math.hypot(pal.x - tx, pal.z - tz);
+      if (!pal.delivered && d < gd && (pal.x - f.x) * fx + (pal.z - f.z) * fz > 0.8) {
+        gd = d;
+        guide = pal;
+      }
+      if (d > 2.2) continue;
+      if (fy + 0.06 <= pal.y || fy >= pal.y + PALLET_H) continue;
+      if (pal.id === p.inserted) continue;
+      const po = { x: pal.x, z: pal.z, hw: 0.6, hd: 0.6, yaw: pal.yaw };
+      if (this.forkFit(f, pal).ok) {
+        if (forks.some((fk) => obbVsObb(fk, po))) p.inserted = pal.id;
+        continue;
+      }
+      for (const fork of forks) {
+        const h = obbVsObb(fork, po);
+        if (!h) continue;
+        const into = -(f.vx * h.nx + f.vz * h.nz);
+        if (!pal.delivered && this.palletCanMove(pal, -h.nx * h.depth, -h.nz * h.depth)) {
+          pal.x -= h.nx * h.depth;
+          pal.z -= h.nz * h.depth;
+          po.x = pal.x;
+          po.z = pal.z;
+          // off-center shove twists the pallet
+          const lever = (fork.x - pal.x) * h.nz - (fork.z - pal.z) * h.nx;
+          pal.yaw += clamp(lever * h.depth * 1.2, -0.03, 0.03);
+          po.yaw = pal.yaw;
+          f.vx *= 0.985;
+          f.vz *= 0.985;
+          moved = pal;
+        } else {
+          f.x += h.nx * h.depth;
+          f.z += h.nz * h.depth;
+          if (into > 0) {
+            f.vx += h.nx * into;
+            f.vz += h.nz * into;
+          }
+        }
+        if (into > 2.2 && this.t - p.lastStab > 1.5 && this.state === 'run') {
+          p.lastStab = this.t;
+          p.shake = 0.6;
+          this.particles.burst(pal.x, pal.y + 0.5, pal.z, 14, 0xb8874f, 3, 0.14, 0.9);
+          if (pal.fragile && !pal.delivered) {
+            this.breakPallet(p, pal);
+          } else {
+            p.stats.penalty += PENALTY.stab;
+            this.audio.crash(3);
+            p.hud?.toast(`🔱 포크로 화물 찍음 +${PENALTY.stab}s`, 'bad');
+            this.radio(p, 'stab', true);
+          }
+        }
+      }
+    }
+    if (moved) {
+      p.pushSync -= dt;
+      if (p.pushSync <= 0) {
+        p.pushSync = 0.15;
+        this.opts.room?.send({ type: 'place', pid: moved.id, x: moved.x, z: moved.z, y: moved.y, yaw: moved.yaw, zone: -1 });
+      }
+    }
+    if (guide) {
+      const fit = this.forkFit(f, guide);
+      const inserted = Math.hypot(tx - guide.x, tz - guide.z) < 0.45;
+      p.alignOk = fit.ok;
+      p.align = fit.ok ? (inserted ? '🟢 삽입 완료 — 포크 ▲' : '🟢 포켓 정렬 OK — 그대로 전진') : `🔴 ${fit.why}`;
+    }
+  }
+
+  private breakPallet(p: Player, pal: Pallet) {
+    p.stats.breaks++;
+    p.stats.penalty += PENALTY.breakFragile;
+    this.audio.glass();
+    this.particles.burst(pal.x, pal.y + 0.6, pal.z, 20, 0xd9a441, 6, 0.08, 1.0);
+    p.hud?.toast('💔 위스키 박살! +15s (원위치 재입고)', 'bad');
+    this.radio(p, 'break', true);
+    Object.assign(pal, { x: pal.home.x, z: pal.home.z, y: 0, yaw: pal.home.yaw });
+    this.opts.room?.send({ type: 'reset', pid: pal.id });
   }
 
   private tryPickup(p: Player) {
     const f = p.f;
     const [tx, tz] = f.forkTip();
-    const forkY = f.y + f.forkH;
-    let best: Pallet | null = null;
+    p.engaged = -1;
     for (const pal of this.world.pallets) {
       if (pal.carriedBy !== -1 || pal.delivered) continue;
-      if (Math.hypot(tx - pal.x, tz - pal.z) > 0.5) continue;
-      if (quarterDiff(f.yaw - pal.yaw) > 0.32) continue;
-      if (forkY > pal.y + 0.14 || forkY < pal.y - 0.25) continue;
-      best = pal;
-      break;
-    }
-    if (!best) {
-      if (p.engaged >= 0) {
-        const e = this.world.pallets[p.engaged];
-        if (forkY > e.y + 0.14 && Math.hypot(tx - e.x, tz - e.z) < 0.5 && e.carriedBy === -1) {
-          this.attach(p, e);
-          return;
-        }
-      }
-      p.engaged = -1;
+      if (Math.hypot(tx - pal.x, tz - pal.z) > 0.45) continue;
+      if (!this.forkFit(f, pal).ok) continue;
+      p.engaged = pal.id;
+      if (p.ctl.lift > 0 && this.state === 'run') this.attach(p, pal);
       return;
     }
-    p.engaged = best.id;
   }
 
   private attach(p: Player, pal: Pallet) {
     const f = p.f;
     p.engaged = -1;
+    p.inserted = -1;
     f.carrying = pal.id;
     let rel = pal.yaw - f.yaw;
     const q = Math.PI / 2;
@@ -657,6 +832,9 @@ export class Game {
     pal.carriedBy = -1;
     f.carrying = -1;
     p.engaged = pal.id;
+    p.inserted = pal.id;
+    f.tilt = 0; // mast levels itself as the load settles
+    f.tiltTarget = 0;
     let zoneId = -1;
     for (const z of this.world.zones) {
       if (z.filled) continue;
@@ -701,7 +879,7 @@ export class Game {
     }
   }
 
-  private dropCargo(p: Player, why: 'crash' | 'tip' | 'landing' | 'rammed') {
+  private dropCargo(p: Player, why: 'crash' | 'tip' | 'landing' | 'rammed' | 'slide') {
     const f = p.f;
     if (f.carrying < 0) return;
     const pal = this.world.pallets[f.carrying];
@@ -712,22 +890,18 @@ export class Game {
     p.stats.drops++;
     this.particles.burst(pose.x, pose.y + 0.6, pose.z, 18, pal.fragile ? 0xc28a3a : 0xb8874f, 4, 0.18, 1.2);
     if (pal.fragile) {
-      p.stats.breaks++;
-      p.stats.penalty += PENALTY.breakFragile;
-      this.audio.glass();
-      this.particles.burst(pose.x, pose.y + 0.6, pose.z, 20, 0xd9a441, 6, 0.08, 1.0);
-      p.hud?.toast('💔 위스키 박살! +15s (원위치 재입고)', 'bad');
-      this.radio(p, 'break', true);
-      Object.assign(pal, { x: pal.home.x, z: pal.home.z, y: 0, yaw: pal.home.yaw });
-      this.opts.room?.send({ type: 'reset', pid: pal.id });
+      pal.x = pose.x;
+      pal.z = pose.z;
+      pal.y = pose.y;
+      this.breakPallet(p, pal);
     } else {
       p.stats.penalty += PENALTY.drop;
       this.audio.crash(4);
-      p.hud?.toast(why === 'tip' ? '🙃 전복 위기! 화물 낙하 +5s' : why === 'rammed' ? '😡 들이받혀서 화물 낙하 +5s' : '📦 화물 낙하 +5s', 'bad');
-      this.radio(p, why === 'rammed' ? 'rammed' : 'drop', true);
+      p.hud?.toast(why === 'slide' ? '🛑 급제동! 화물이 앞으로 쏟아짐 +5s (틸트 📐)' : why === 'tip' ? '🙃 전복 위기! 화물 낙하 +5s' : why === 'rammed' ? '😡 들이받혀서 화물 낙하 +5s' : '📦 화물 낙하 +5s', 'bad');
+      this.radio(p, why === 'rammed' ? 'rammed' : why === 'slide' ? 'slide' : 'drop', true);
       const [fx, fz] = f.fwd;
-      pal.x = pose.x + fx * 0.6 + (Math.random() - 0.5) * 0.6;
-      pal.z = pose.z + fz * 0.6 + (Math.random() - 0.5) * 0.6;
+      pal.x = pose.x + fx * 1.3 + (Math.random() - 0.5) * 0.5;
+      pal.z = pose.z + fz * 1.3 + (Math.random() - 0.5) * 0.5;
       pal.y = 0;
       pal.yaw = pose.yaw + (Math.random() - 0.5) * 0.5;
       this.opts.room?.send({ type: 'place', pid: pal.id, x: pal.x, z: pal.z, y: 0, yaw: pal.yaw, zone: -1 });
@@ -890,8 +1064,9 @@ export class Game {
           pal.yaw = pose.yaw;
         }
       }
-      pal.mesh.position.set(pal.x, pal.y - 0.02, pal.z);
-      pal.mesh.rotation.y = pal.yaw;
+      const owner = pal.carriedBy !== -1 ? this.players.find((p) => p.idx === pal.carriedBy) : undefined;
+      pal.mesh.position.set(pal.x, pal.y - 0.005, pal.z);
+      pal.mesh.rotation.set(owner ? -owner.f.tilt : 0, pal.yaw, 0);
     }
   }
 
@@ -948,7 +1123,7 @@ export class Game {
       p.hud!.update({
         time: this.t, delivered: p.stats.delivered, total: this.world.pallets.length, speed: p.f.speed, forkH: p.f.forkH,
         turbo: p.f.turbo, style: p.stats.style, penalty: p.stats.penalty, tip: p.f.tipRisk, carrying: p.f.carrying >= 0,
-        fragile: p.f.carrying >= 0 && this.world.pallets[p.f.carrying].fragile, camLabel: CAM_LABELS[p.camMode],
+        fragile: p.f.carrying >= 0 && this.world.pallets[p.f.carrying].fragile, camLabel: CAM_LABELS[p.camMode], tilted: p.f.tilt > 0.06, align: this.state === 'run' ? p.align : '', alignOk: p.alignOk,
         opponent: opp ? { name: opp.spec.name, delivered: opp.stats.delivered } : undefined,
       });
       p.hud!.drawMinimap(this.world, flist, p.f, now);

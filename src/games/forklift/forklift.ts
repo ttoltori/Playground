@@ -7,6 +7,7 @@ export const FK = {
   bodyFront: 1.0, // local z of body front / mast
   bodyRear: -1.45,
   forkLen: 1.15,
+  forkX: 0.3, // tine offset from the centerline
   palletOffset: 1.68, // local z of a carried pallet's center
   pivot: 0.55, // front axle (forklifts steer with the REAR wheels, the tail swings!)
   wheelbase: 1.55,
@@ -31,6 +32,9 @@ export class Forklift {
   readonly mesh = new THREE.Group();
   private carriage = new THREE.Group();
   private innerMast = new THREE.Group();
+  private mast = new THREE.Group();
+  tilt = 0; // mast tilt back (rad)
+  tiltTarget = 0;
   private rearWheels: THREE.Object3D[] = [];
   private allWheels: THREE.Mesh[] = [];
   private beacon!: THREE.Mesh;
@@ -60,6 +64,16 @@ export class Forklift {
   palletObb(): OBB {
     const [fx, fz] = this.fwd;
     return { x: this.x + fx * FK.palletOffset, z: this.z + fz * FK.palletOffset, hw: 0.6, hd: 0.6, yaw: this.yaw + this.carryYaw };
+  }
+
+  /** footprints of the two fork tines */
+  forkObbs(): OBB[] {
+    const [fx, fz] = this.fwd;
+    const [rx, rz] = this.right;
+    const c = FK.bodyFront + 0.2 + FK.forkLen / 2;
+    return [-FK.forkX, FK.forkX].map((sx) => ({
+      x: this.x + fx * c + rx * sx, z: this.z + fz * c + rz * sx, hw: 0.06, hd: FK.forkLen / 2, yaw: this.yaw,
+    }));
   }
 
   forkTip(): [number, number] {
@@ -127,12 +141,18 @@ export class Forklift {
       this.allWheels.push(r);
     }
     // mast (outer)
-    for (const x of [-0.42, 0.42]) b.add(box(0.1, 2.2, 0.12, steel, x, 1.2, FK.bodyFront));
-    b.add(box(0.94, 0.1, 0.12, steel, 0, 2.3, FK.bodyFront));
+    // everything on the mast tilts around a pivot near the front axle
+    const mi = new THREE.Group();
+    mi.position.set(0, -0.3, -FK.bodyFront);
+    this.mast.position.set(0, 0.3, FK.bodyFront);
+    this.mast.add(mi);
+    b.add(this.mast);
+    for (const x of [-0.42, 0.42]) mi.add(box(0.1, 2.2, 0.12, steel, x, 1.2, FK.bodyFront));
+    mi.add(box(0.94, 0.1, 0.12, steel, 0, 2.3, FK.bodyFront));
     // inner mast (telescopes)
     for (const x of [-0.32, 0.32]) this.innerMast.add(box(0.08, 2.2, 0.1, steel, x, 1.2, FK.bodyFront + 0.08));
     this.innerMast.add(box(0.72, 0.08, 0.1, steel, 0, 2.3, FK.bodyFront + 0.08));
-    b.add(this.innerMast);
+    mi.add(this.innerMast);
     // carriage + forks
     const c = this.carriage;
     c.add(box(1.0, 0.45, 0.06, dark, 0, 0.32, FK.bodyFront + 0.16));
@@ -140,9 +160,9 @@ export class Forklift {
     c.add(box(1.0, 0.05, 0.05, dark, 0, 1.27, FK.bodyFront + 0.16));
     for (const x of [-0.3, 0.3]) {
       c.add(box(0.12, 0.5, 0.05, steel, x, 0.3, FK.bodyFront + 0.2));
-      c.add(box(0.12, 0.05, FK.forkLen, steel, x, 0.06, FK.bodyFront + 0.2 + FK.forkLen / 2));
+      c.add(box(0.12, 0.04, FK.forkLen, steel, x, 0.04, FK.bodyFront + 0.2 + FK.forkLen / 2));
     }
-    b.add(c);
+    mi.add(c);
     // name tag
     b.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
@@ -174,6 +194,7 @@ export class Forklift {
     this.body.rotation.z = THREE.MathUtils.lerp(this.body.rotation.z, this.roll, 0.2);
     this.body.rotation.x = THREE.MathUtils.lerp(this.body.rotation.x, this.pitch, 0.2);
     this.carriage.position.y = this.forkH;
+    this.mast.rotation.x = -this.tilt;
     this.innerMast.position.y = Math.max(0, this.forkH - 1.0);
     for (const w of this.rearWheels) w.rotation.y = -this.steer;
     this.wheelSpin += (this.speed * dt) / 0.3;

@@ -44,12 +44,14 @@ export function box(w: number, h: number, d: number, mat: THREE.Material, x = 0,
 
 export function makePalletMesh(fragile: boolean, label: string): THREE.Group {
   const g = new THREE.Group();
+  g.rotation.order = 'YXZ';
   const woodMat = std(0xffffff, { map: tex.wood() });
   // top deck slats
   for (let i = 0; i < 5; i++) g.add(box(1.2, 0.03, 0.18, woodMat, 0, 0.135, -0.5 + i * 0.25));
   // stringer blocks: 3 rows of blocks leaving fork pockets
-  for (const x of [-0.5, 0, 0.5]) for (const z of [-0.5, 0, 0.5]) g.add(box(0.16, 0.1, 0.16, woodMat, x, 0.07, z));
-  for (const x of [-0.5, 0, 0.5]) g.add(box(0.16, 0.025, 1.2, woodMat, x, 0.0125, 0));
+  // 9 blocks -> two fork pockets on every side (4-way pallet). Pocket: 0.05..0.50 from center, 2.5..12cm high
+  for (const x of [-0.55, 0, 0.55]) for (const z of [-0.55, 0, 0.55]) g.add(box(0.1, 0.1, 0.1, woodMat, x, 0.07, z));
+  for (const x of [-0.55, 0, 0.55]) g.add(box(0.1, 0.02, 1.2, woodMat, x, 0.01, 0));
   // cargo
   if (fragile) {
     const m = std(0xffffff, { map: tex.fragile() });

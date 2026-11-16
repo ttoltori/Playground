@@ -61,6 +61,7 @@ export const PENALTY = {
   cone: 2,
   crash: 1,
   drop: 5,
+  stab: 3,
   breakFragile: 15,
 };
 

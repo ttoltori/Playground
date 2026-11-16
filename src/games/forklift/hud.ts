@@ -14,6 +14,9 @@ export interface HudData {
   carrying: boolean;
   fragile: boolean;
   camLabel: string;
+  tilted: boolean;
+  align: string; // fork/pocket guidance
+  alignOk: boolean;
   opponent?: { name: string; delivered: number };
 }
 
@@ -42,9 +45,11 @@ export class Hud {
         <div class="gauge"><span>속도</span><b data-k="spd">0</b><small>km/h</small></div>
         <div class="gauge fork"><span>포크</span><div class="bar v"><i data-k="fork"></i></div><b data-k="forkv">0.0m</b></div>
         <div class="gauge"><span>터보</span><div class="bar"><i data-k="turbo"></i></div></div>
+        <div class="gauge tilt" data-k="tilt"></div>
         <div class="gauge cam" data-k="cam"></div>
       </div>
       <div class="hud-tip" data-k="tip">⚠ 전복 위험! 포크 내려!</div>
+      <div class="hud-align" data-k="align"></div>
       <div class="hud-center" data-k="center"></div>
       <canvas class="minimap" width="192" height="120"></canvas>
       <div class="toasts"></div>`;
@@ -70,6 +75,10 @@ export class Hud {
     this.el.pen.textContent = d.penalty > 0 ? `페널티 +${d.penalty.toFixed(0)}s` : '';
     this.el.tip.style.opacity = d.tip > 0.7 ? '1' : '0';
     this.el.cam.textContent = `🎥 ${d.camLabel}`;
+    this.el.tilt.textContent = d.tilted ? '📐 틸트 후경' : '📐 수평';
+    this.el.tilt.classList.toggle('on', d.tilted);
+    this.el.align.textContent = d.align;
+    this.el.align.className = 'hud-align ' + (d.align ? (d.alignOk ? 'ok' : 'no') : '');
     this.el.opp.textContent = d.opponent ? `VS ${d.opponent.name} 📦${d.opponent.delivered}` : '';
     this.root.classList.toggle('fragile', d.carrying && d.fragile);
   }

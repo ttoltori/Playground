@@ -88,14 +88,16 @@ function showForkliftMenu() {
           <details class="howto" ${touch ? '' : 'open'}>
             <summary>🕹️ 조작법 & 꿀팁</summary>
             <div class="keys">
-              <div><b>1인</b> W/A/S/D·방향키 주행 · R/E 포크↑ · F/Q 포크↓ · Shift 터보 · Space 드리프트 · C 시점 · H 경적</div>
-              <div><b>2P-좌</b> WASD · R/F 포크 · Shift 터보 · Space 드리프트 · C 시점</div>
-              <div><b>2P-우</b> 방향키 · . / , 포크 · 우Shift 터보 · / 드리프트 · M 시점</div>
+              <div><b>1인</b> W/A/S/D·방향키 주행 · R/E 포크↑ · F/Q 포크↓ · T 틸트 · Shift 터보 · Space 드리프트 · C 시점 · H 경적</div>
+              <div><b>2P-좌</b> WASD · R/F 포크 · T 틸트 · Shift 터보 · Space 드리프트 · C 시점</div>
+              <div><b>2P-우</b> 방향키 · . / , 포크 · K 틸트 · 우Shift 터보 · / 드리프트 · M 시점</div>
               <div><b>모바일</b> 왼쪽 드래그 주행 · 오른쪽 버튼 (가로 모드 추천)</div>
-              <div><b>패드</b> RT/LT 가감속 · 스틱 조향 · 십자 ↑↓ 포크 · A 드리프트 · B 터보 · Y 시점</div>
+              <div><b>패드</b> RT/LT 가감속 · 스틱 조향 · 십자 ↑↓ 포크 · LB 틸트 · A 드리프트 · B 터보 · Y 시점</div>
             </div>
             <ul class="tips">
-              <li>포크를 바닥까지 내리고 팔레트에 <b>정면으로</b> 꽂은 뒤 들어올리면 픽업.</li>
+              <li>팔레트 <b>포켓(홈)</b>에 포크 두 가닥이 정확히 들어가야 한다. 높이(바닥 가까이)·좌우·각도가 맞으면 🟢 표시 → 끝까지 밀어넣고 포크 ▲.</li>
+              <li>안 맞은 채 들이밀면 팔레트가 밀리고 돌아가며, 세게 박으면 <b>화물을 찍는 사고</b>(+3s, 위스키는 박살).</li>
+              <li><b>틸트(T / 📐)</b>: 짐을 든 뒤 마스트를 뒤로 젖혀라. 안 젖히고 급브레이크 밟으면 짐이 앞으로 쏟아진다. 꽂고 뺄 때는 수평으로.</li>
               <li><b>초록 DROP</b> 구역에 내려놓으면 입고. 중앙에 칼각이면 보너스!</li>
               <li><b>분홍 DROP</b>은 트럭 상차 — 포크를 1.2m 이상 들고 짐칸에 밀어넣은 후 내려라.</li>
               <li>지게차는 <b>뒷바퀴 조향</b>. 꼬리가 크게 돈다. 랙에 엉덩이 조심.</li>
