@@ -14,6 +14,9 @@ export const MINIGAMES: MiniGameDef[] = Object.values(mods)
 const app = document.getElementById('app')!;
 const css = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = app) => root.querySelector(sel) as T;
+const isPoints = (d: MiniGameDef) => d.scoreType === 'points';
+const fmtScore = (d: MiniGameDef, v: number) => (isPoints(d) ? (d.formatScore ? d.formatScore(v) : String(v)) : fmtTime(v / 1000));
+const fmtMedal = (d: MiniGameDef, m: number) => (isPoints(d) ? fmtScore(d, m) : `${m}s`);
 let current: MiniGame | null = null;
 let muted = false;
 const selected = new Map<string, number>();
@@ -33,7 +36,7 @@ export function showMiniMenu(def: MiniGameDef, back: () => void) {
         <h3>📈 난이도</h3>
         <div class="levels">${def.levels.map((l, i) => `
           <button class="level" data-l="${i + 1}"><span class="lv">LV.${i + 1}</span><b>${l.name}</b><em>${l.title}</em>
-          <small>${l.desc}</small><span class="medals">🥇 ${l.medals[0]}s · 🥈 ${l.medals[1]}s · 🥉 ${l.medals[2]}s</span></button>`).join('')}
+          <small>${l.desc}</small><span class="medals">🥇 ${fmtMedal(def, l.medals[0])} · 🥈 ${fmtMedal(def, l.medals[1])} · 🥉 ${fmtMedal(def, l.medals[2])}</span></button>`).join('')}
         </div>
         <button class="big-btn" id="start">출근하기 ▶</button>
       </section>
@@ -80,11 +83,11 @@ async function loadBoard(def: MiniGameDef, level: number, myId: string) {
   const lv = document.getElementById('lb-level');
   if (!el) return;
   if (lv) lv.textContent = `LV.${level} ${def.levels[level - 1].name}`;
-  const { rows, remote } = await topGameScores(def.id, level, 15);
+  const { rows, remote } = await topGameScores(def.id, level, 15, isPoints(def));
   if (!document.getElementById('lb')) return;
   el.innerHTML = rows.length ? `<table><tbody>${rows.map((r, i) => `
     <tr class="${r.client_id === myId ? 'me' : ''}"><td class="rk">${i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1}</td>
-    <td class="nm">${escapeHtml(r.nickname)}</td><td class="tm">${fmtTime(r.time_ms / 1000)}</td></tr>`).join('')}</tbody></table>
+    <td class="nm">${escapeHtml(r.nickname)}</td><td class="tm">${fmtScore(def, r.time_ms)}</td></tr>`).join('')}</tbody></table>
     <div class="lb-src">${remote ? '🌐 전체 랭킹' : '📱 이 기기 기록'}</div>` : `<div class="lb-empty">아직 기록이 없습니다. 첫 번째 전설이 되어라.</div>`;
 }
 
@@ -137,14 +140,15 @@ export function startMini(def: MiniGameDef, level: number, back: () => void) {
 async function showMiniResult(def: MiniGameDef, level: number, r: MiniGameResult, back: () => void) {
   const profile = loadProfile();
   const lv = def.levels[level - 1];
-  const t = r.timeMs / 1000;
-  const medal = t <= lv.medals[0] ? '🥇' : t <= lv.medals[1] ? '🥈' : t <= lv.medals[2] ? '🥉' : '🎖️';
+  const v = isPoints(def) ? r.timeMs : r.timeMs / 1000;
+  const hit = (m: number) => (isPoints(def) ? v >= m : v <= m);
+  const medal = hit(lv.medals[0]) ? '🥇' : hit(lv.medals[1]) ? '🥈' : hit(lv.medals[2]) ? '🥉' : '🎖️';
   app.innerHTML = `<div class="screen"><div class="menu narrow result">
     <div class="res-title">${escapeHtml(r.title ?? '퇴근 완료!')}</div>
     <div class="res-sub">${def.emoji} ${escapeHtml(def.name)} · LV.${level} ${lv.name}</div>
     <div class="res-cards"><div class="res-card winner" style="--pc:${css(profile.color)}">
       <div class="res-name">${escapeHtml(profile.nickname)}</div>
-      <div class="res-final">${medal} ${fmtTime(t)}</div>
+      <div class="res-final">${medal} ${fmtScore(def, r.timeMs)}</div>
       ${r.detail.map((d) => `<div class="sr"><span>${escapeHtml(d.label)}</span><b>${escapeHtml(d.value)}</b></div>`).join('')}
     </div></div>
     <div id="submit-status" class="hint">리더보드 등록 중...</div>
@@ -159,7 +163,7 @@ async function showMiniResult(def: MiniGameDef, level: number, r: MiniGameResult
     startMini(def, level + 1, back);
   };
   const res = await submitGameScore({ game: def.id, nickname: profile.nickname, level, time_ms: Math.round(r.timeMs), client_id: profile.id });
-  const { rows } = await topGameScores(def.id, level, 100);
+  const { rows } = await topGameScores(def.id, level, 100, isPoints(def));
   const rank = rows.findIndex((x) => x.nickname.toLowerCase() === profile.nickname.toLowerCase()) + 1;
   const el = document.getElementById('submit-status');
   if (el) el.textContent = res.ok ? `${res.remote ? '🌐 전체' : '📱 기기'} 랭킹 ${rank > 0 ? rank + '위' : '-'} (개인 최고기록 기준)` : `등록 실패: ${res.error}`;

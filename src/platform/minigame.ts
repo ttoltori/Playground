@@ -1,6 +1,7 @@
 /** Contract every playground mini-game implements. A game lives in src/games/<id>/ and exports `def` from def.ts. */
 export interface MiniGameResult {
-  /** final time in ms after penalties/bonuses (lower is better) */
+  /** time games: final time in ms after penalties/bonuses (lower is better).
+   *  points games (def.scoreType === 'points'): the score as a non-negative integer (higher is better). */
   timeMs: number;
   /** headline shown on the result screen, e.g. "퇴근 완료!" */
   title?: string;
@@ -28,7 +29,12 @@ export interface MiniGameDef {
   emoji: string;
   desc: string; // one-line pitch for the hub card
   order: number; // hub ordering
-  levels: { name: string; title: string; desc: string; medals: [number, number, number] }[]; // medal times in seconds
+  /** 'time' (default): lower is better, shown as m:ss.s. 'points': higher is better, shown via formatScore. */
+  scoreType?: 'time' | 'points';
+  /** points games: how to display a score value, e.g. (v) => (v / 100).toFixed(1) + 'm' */
+  formatScore?: (v: number) => string;
+  /** medals: time games = seconds (gold, silver, bronze; at or under). points games = raw score thresholds (at or over). */
+  levels: { name: string; title: string; desc: string; medals: [number, number, number] }[];
   howto: string[]; // HTML-safe tips/controls lines
   create(opts: MiniGameOptions): MiniGame;
 }

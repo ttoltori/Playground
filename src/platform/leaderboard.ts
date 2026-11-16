@@ -96,7 +96,7 @@ export async function submitGameScore(row: GameScoreRow): Promise<{ ok: boolean;
   return { ok: !error, remote: true, error: error?.message };
 }
 
-export async function topGameScores(game: string, level: number, limit = 20): Promise<{ rows: GameScoreRow[]; remote: boolean }> {
+export async function topGameScores(game: string, level: number, limit = 20, higherBetter = false): Promise<{ rows: GameScoreRow[]; remote: boolean }> {
   let rows: GameScoreRow[] = [];
   let remote = false;
   if (supabase) {
@@ -105,14 +105,14 @@ export async function topGameScores(game: string, level: number, limit = 20): Pr
       .select('game,nickname,level,time_ms,client_id,created_at')
       .eq('game', game)
       .eq('level', level)
-      .order('time_ms', { ascending: true })
+      .order('time_ms', { ascending: !higherBetter })
       .limit(200);
     if (!error && data) {
       rows = data as GameScoreRow[];
       remote = true;
     }
   }
-  if (!remote) rows = localGames().filter((r) => r.game === game && r.level === level).sort((a, b) => a.time_ms - b.time_ms);
+  if (!remote) rows = localGames().filter((r) => r.game === game && r.level === level).sort((a, b) => (higherBetter ? b.time_ms - a.time_ms : a.time_ms - b.time_ms));
   const seen = new Set<string>();
   const best: GameScoreRow[] = [];
   for (const r of rows) {
