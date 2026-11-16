@@ -7,6 +7,7 @@ import { OnlineRoom, type PeerInfo } from './games/forklift/online';
 import { submitScore, topScores } from './platform/leaderboard';
 import { FORKLIFT_COLORS, loadProfile, saveProfile } from './platform/profile';
 import { isOnline } from './platform/supabase';
+import { MINIGAMES, showMiniMenu, startMini } from './minigames';
 
 const app = document.getElementById('app')!;
 const profile = loadProfile();
@@ -36,13 +37,15 @@ function showHub() {
         <div class="card-desc">창고에서 창고로. 팔레트 들고 밟아라. 타임어택 & 1:1 들이받기 대전</div>
         <div class="card-tag">PLAY NOW</div>
       </button>
-      <div class="card soon"><div class="card-emoji">🏗️</div><div class="card-title">타워크레인 인형뽑기</div><div class="card-desc">30m 위에서 컨테이너 뽑기</div><div class="card-tag">COMING SOON</div></div>
-      <div class="card soon"><div class="card-emoji">🚧</div><div class="card-title">포크레인 볼링</div><div class="card-desc">버킷으로 드럼통 스트라이크</div><div class="card-tag">COMING SOON</div></div>
-      <div class="card soon"><div class="card-emoji">🚛</div><div class="card-title">덤프트럭 후진주차</div><div class="card-desc">사이드미러 하나로 1cm 주차</div><div class="card-tag">COMING SOON</div></div>
+      ${MINIGAMES.map((g) => `<button class="card hot" data-g="${g.id}"><div class="card-emoji">${g.emoji}</div><div class="card-title">${escapeHtml(g.name)}</div><div class="card-desc">${g.desc}</div><div class="card-tag">NEW</div></button>`).join('')}
     </div>
     <footer class="foot">${isOnline() ? '🟢 온라인 연결됨 (리더보드 · 온라인 대전)' : '🟡 오프라인 모드 — 기록은 이 기기에만 저장됩니다'}</footer>
   `);
   $('#go-forklift').onclick = () => showForkliftMenu();
+  app.querySelectorAll<HTMLButtonElement>('[data-g]').forEach((b) => (b.onclick = () => {
+    const def = MINIGAMES.find((g) => g.id === b.dataset.g)!;
+    showMiniMenu(def, showHub);
+  }));
 }
 
 // ------------------------------------------------------------------ forklift menu
@@ -440,6 +443,15 @@ async function showResult(r: GameResult, players: PlayerSpec[], localIndex: numb
 }
 
 showHub();
+{
+  // deep link: ?game=<id>&level=<n> jumps straight into a mini-game (also handy for testing)
+  const q = new URLSearchParams(location.search);
+  const def = MINIGAMES.find((g) => g.id === q.get('game'));
+  if (def) {
+    if (q.get('level')) startMini(def, Math.max(1, Math.min(def.levels.length, Number(q.get('level')))), showHub);
+    else showMiniMenu(def, showHub);
+  }
+}
 if (new URLSearchParams(location.search).get('room')) {
   showForkliftMenu();
   selectedMode = 'online';

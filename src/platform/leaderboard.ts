@@ -63,3 +63,64 @@ export async function topScores(level: number, limit = 20): Promise<{ rows: Scor
   }
   return { rows: best, remote };
 }
+
+// ---------------------------------------------------------------- generic mini-game scores
+export interface GameScoreRow {
+  game: string;
+  nickname: string;
+  level: number;
+  time_ms: number;
+  client_id: string;
+  created_at?: string;
+}
+
+const LOCAL_G = 'pg.game.scores.v1';
+function localGames(): GameScoreRow[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_G) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+export async function submitGameScore(row: GameScoreRow): Promise<{ ok: boolean; remote: boolean; error?: string }> {
+  const all = localGames();
+  all.push({ ...row, created_at: new Date().toISOString() });
+  try {
+    localStorage.setItem(LOCAL_G, JSON.stringify(all.slice(-500)));
+  } catch {
+    /* ignore */
+  }
+  if (!supabase) return { ok: true, remote: false };
+  const { error } = await supabase.from('game_scores').insert(row);
+  return { ok: !error, remote: true, error: error?.message };
+}
+
+export async function topGameScores(game: string, level: number, limit = 20): Promise<{ rows: GameScoreRow[]; remote: boolean }> {
+  let rows: GameScoreRow[] = [];
+  let remote = false;
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('game_scores')
+      .select('game,nickname,level,time_ms,client_id,created_at')
+      .eq('game', game)
+      .eq('level', level)
+      .order('time_ms', { ascending: true })
+      .limit(200);
+    if (!error && data) {
+      rows = data as GameScoreRow[];
+      remote = true;
+    }
+  }
+  if (!remote) rows = localGames().filter((r) => r.game === game && r.level === level).sort((a, b) => a.time_ms - b.time_ms);
+  const seen = new Set<string>();
+  const best: GameScoreRow[] = [];
+  for (const r of rows) {
+    const k = r.nickname.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    best.push(r);
+    if (best.length >= limit) break;
+  }
+  return { rows: best, remote };
+}
